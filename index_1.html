@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="天気予報">
+<meta name="theme-color" content="#cfe8f7">
+<title>天気予報</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --ink: #1c2733;
+    --ink-soft: rgba(28, 39, 51, 0.62);
+    --card: rgba(255, 255, 255, 0.72);
+    --line: rgba(28, 39, 51, 0.1);
+    --accent: #2563a8;
+    --rain: #2b6cb0;
+    --hot: #c2410c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Segoe UI", sans-serif;
+    color: var(--ink);
+    min-height: 100vh;
+    background: linear-gradient(160deg, #cfe8f7 0%, #eaf4f9 45%, #f6f1e7 100%);
+    transition: background 1.2s ease;
+    padding: 24px 16px 48px;
+  }
+  body.wx-rain  { background: linear-gradient(160deg, #a9bfd1 0%, #cdd9e2 50%, #e6ebee 100%); }
+  body.wx-cloud { background: linear-gradient(160deg, #c3cfd9 0%, #dde5ea 50%, #f1f2f0 100%); }
+  body.wx-snow  { background: linear-gradient(160deg, #dfe9f2 0%, #eef3f8 50%, #fafcfe 100%); }
+  body.wx-night { background: linear-gradient(160deg, #21304a 0%, #3a4a66 60%, #5b6a85 100%); }
+  body.wx-night { --ink: #f2f5f9; --ink-soft: rgba(242,245,249,0.65); --card: rgba(255,255,255,0.1); --line: rgba(255,255,255,0.16); }
+
+  .wrap { max-width: 640px; margin: 0 auto; }
+
+  header { display: flex; gap: 8px; margin-bottom: 28px; }
+  #city-input {
+    flex: 1; font-size: 16px; padding: 12px 16px;
+    border: 1px solid var(--line); border-radius: 14px;
+    background: var(--card); color: var(--ink); outline: none;
+  }
+  #city-input::placeholder { color: var(--ink-soft); }
+  #city-input:focus { border-color: var(--accent); }
+  button {
+    font-size: 15px; padding: 12px 16px; border: none; border-radius: 14px;
+    background: var(--accent); color: #fff; cursor: pointer; font-family: inherit;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:focus-visible { outline: 3px solid rgba(37,99,168,0.4); outline-offset: 2px; }
+  #geo-btn { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+
+  #status { color: var(--ink-soft); font-size: 14px; margin-bottom: 16px; min-height: 1.4em; }
+
+  /* 現在の天気 ─ 温度を主役に */
+  .now { padding: 8px 4px 28px; }
+  .now .place { font-size: 15px; color: var(--ink-soft); letter-spacing: 0.04em; }
+  .now .main { display: flex; align-items: flex-end; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
+  .now .temp { font-size: 96px; font-weight: 200; line-height: 1; letter-spacing: -0.03em; }
+  .now .desc { font-size: 22px; padding-bottom: 12px; }
+  .now .meta { margin-top: 14px; font-size: 14px; color: var(--ink-soft); display: flex; gap: 18px; flex-wrap: wrap; }
+
+  h2 { font-size: 14px; font-weight: 600; letter-spacing: 0.1em; color: var(--ink-soft); margin: 26px 0 10px; }
+
+  .hourly { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+  .hour {
+    min-width: 72px; text-align: center; padding: 14px 8px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  }
+  .hour .h-time { font-size: 12px; color: var(--ink-soft); }
+  .hour .h-emoji { font-size: 24px; margin: 8px 0 6px; }
+  .hour .h-temp { font-weight: 600; }
+  .hour .h-pop { font-size: 11px; color: var(--ink-soft); margin-top: 4px; }
+  .hour .h-pop.wet { color: var(--rain); font-weight: 600; }
+  .hour .h-amt { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .hour .h-amt.wet { color: var(--rain); }
+  .day .d-amt { display: block; font-size: 11px; color: var(--rain); }
+  body.wx-night .hour .h-amt.wet, body.wx-night .day .d-amt,
+  body.wx-night .hour .h-pop.wet, body.wx-night .day .d-pop.wet { color: #9cc6ef; }
+
+  .daily { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 6px 18px; }
+  .day { display: grid; grid-template-columns: 5.5em 2em 4em 1fr auto; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .day:last-child { border-bottom: none; }
+  .day .d-name { font-size: 14px; font-weight: 500; }
+  .day .d-pop { font-size: 12px; color: var(--ink-soft); }
+  .day .d-pop.wet { color: var(--rain); font-weight: 600; }
+  .day .d-bar { height: 5px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
+  .day .d-bar span { position: absolute; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #5ba3d9, #e2a25b); }
+  .day .d-range { font-size: 14px; white-space: nowrap; }
+  .day .d-min { color: var(--rain); }
+  .day .d-max { color: var(--hot); font-weight: 600; }
+  body.wx-night .day .d-min { color: #9cc6ef; }
+  body.wx-night .day .d-max { color: #f0b285; }
+
+  footer { margin-top: 28px; font-size: 12px; color: var(--ink-soft); text-align: center; }
+  .hidden { display: none; }
+
+  /* 📱 スマホ最適化 */
+  @media (max-width: 480px) {
+    body { padding: 16px 12px 40px; }
+    .now .temp { font-size: 72px; }
+    .now .desc { font-size: 18px; padding-bottom: 9px; }
+    #radar-map { height: 260px; }
+    .radar-bar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+    #radar-time { width: 100%; }
+    .day { grid-template-columns: 5em 1.6em 3.6em 1fr auto; gap: 6px; }
+    .hour { min-width: 64px; }
+    header { flex-wrap: wrap; }
+    #city-input { min-width: 0; flex: 1 1 100%; }
+    #search-btn, #geo-btn { flex: 1; }
+  }
+  /* タップしやすいサイズを確保 */
+  button { min-height: 44px; }
+  .hourly { -webkit-overflow-scrolling: touch; }
+
+  .sources { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+
+  /* ☔ 今後4時間の雨(15分ごとのバーグラフ) */
+  #nowcast-sum { font-weight: 400; letter-spacing: 0; text-transform: none; }
+  #nowcast {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 16px 14px 8px;
+  }
+  .nc-chart { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+  .nc-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative; }
+  .nc-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 2px; background: var(--line); }
+  .nc-bar.r1 { background: #93c5e8; }
+  .nc-bar.r2 { background: #4a90c9; }
+  .nc-bar.r3 { background: #1e5f96; }
+  body.wx-night .nc-bar.r1 { background: #6d9dc2; }
+  .nc-val {
+    position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; color: var(--rain); white-space: nowrap;
+  }
+  body.wx-night .nc-val { color: #9cc6ef; }
+  .nc-axis { display: flex; gap: 3px; margin-top: 6px; }
+  .nc-tick { flex: 1; font-size: 10px; color: var(--ink-soft); text-align: left; }
+  .nc-none { font-size: 13px; color: var(--ink-soft); text-align: center; padding: 8px 0 12px; }
+
+  /* ⚠️ アラート */
+  #alerts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .alert {
+    border-radius: 14px; padding: 12px 16px; font-size: 14px;
+    border: 1px solid; line-height: 1.6;
+  }
+  .alert summary { cursor: pointer; font-weight: 600; list-style: none; }
+  .alert summary::before { content: "▸ "; font-weight: 400; }
+  .alert[open] summary::before { content: "▾ "; }
+  .alert .a-body { margin-top: 8px; font-size: 13px; white-space: pre-wrap; }
+  .alert .a-meta { margin-top: 6px; font-size: 12px; opacity: 0.75; }
+  .sev-extreme  { background: rgba(220, 38, 38, 0.14); border-color: rgba(220, 38, 38, 0.45); color: #991b1b; }
+  .sev-severe   { background: rgba(234, 88, 12, 0.14); border-color: rgba(234, 88, 12, 0.45); color: #9a3412; }
+  .sev-moderate { background: rgba(202, 138, 4, 0.14); border-color: rgba(202, 138, 4, 0.45); color: #854d0e; }
+  .sev-minor    { background: rgba(37, 99, 168, 0.1);  border-color: rgba(37, 99, 168, 0.35); color: #1e4e7a; }
+  body.wx-night .sev-extreme  { color: #fca5a5; }
+  body.wx-night .sev-severe   { color: #fdba74; }
+  body.wx-night .sev-moderate { color: #fde047; }
+  body.wx-night .sev-minor    { color: #93c5fd; }
+
+  /* ⚙️ 設定 */
+  #settings { margin-top: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); padding: 4px 16px; }
+  #settings summary { cursor: pointer; font-size: 14px; padding: 10px 0; color: var(--ink-soft); }
+  #settings label { display: block; font-size: 13px; color: var(--ink-soft); margin: 10px 0; }
+  #settings input {
+    display: block; width: 100%; margin-top: 4px; font-size: 14px; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink);
+  }
+  .set-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+  #keys-save { font-size: 14px; padding: 9px 14px; border-radius: 10px; }
+  #keys-status { font-size: 13px; color: var(--accent); }
+  .set-note { font-size: 12px; color: var(--ink-soft); margin: 8px 0 12px; line-height: 1.6; }
+
+  /* 雨雲レーダー */
+  #radar-wrap { border: 1px solid var(--line); border-radius: 18px; overflow: hidden; background: var(--card); }
+  #radar-map { height: 340px; width: 100%; }
+  .radar-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+  #radar-play { padding: 8px 14px; font-size: 14px; border-radius: 10px; }
+  .radar-modes { display: flex; gap: 4px; }
+  .radar-mode {
+    padding: 7px 12px; font-size: 13px; border-radius: 10px;
+    background: transparent; color: var(--ink-soft); border: 1px solid var(--line);
+  }
+  .radar-mode.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #radar-time { font-size: 13px; color: var(--ink-soft); }
+  #radar-time .fcst { color: var(--rain); font-weight: 600; }
+  body.wx-night #radar-time .fcst { color: #9cc6ef; }
+  body.wx-night #radar-map { filter: brightness(0.85); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <input id="city-input" type="text" placeholder="都市名を入力(例: 東京、Paris、New York)" autocomplete="off">
+    <button id="search-btn">検索</button>
+    <button id="geo-btn" title="現在地の天気">📍</button>
+  </header>
+
+  <p id="status">都市名を検索するか、📍で現在地の天気を表示します。</p>
+
+  <div id="result" class="hidden">
+    <div id="alerts"></div>
+    <section class="now">
+      <div class="place" id="place"></div>
+      <div class="sources" id="sources"></div>
+      <div class="main">
+        <div class="temp" id="now-temp"></div>
+        <div class="desc" id="now-desc"></div>
+      </div>
+      <div class="meta" id="now-meta"></div>
+    </section>
+
+    <div id="nowcast-sec">
+      <h2>今後4時間の雨 <span id="nowcast-sum"></span></h2>
+      <div id="nowcast"></div>
+    </div>
+
+    <h2>1時間ごと(24時間)</h2>
+    <div class="hourly" id="hourly"></div>
+
+    <h2>週間予報</h2>
+    <div class="daily" id="daily"></div>
+
+    <h2>気象レーダー</h2>
+    <div id="radar-wrap">
+      <div id="radar-map"></div>
+      <div class="radar-bar">
+        <button id="radar-play" type="button">▶ 再生</button>
+        <span class="radar-modes">
+          <button class="radar-mode active" data-mode="rain" type="button">🌧 雨雲</button>
+          <button class="radar-mode" data-mode="sat" type="button">🛰 雲(衛星)</button>
+        </span>
+        <span id="radar-time"></span>
+      </div>
+    </div>
+  </div>
+
+  <details id="settings">
+    <summary>⚙️ 精度設定 — 複数ソース合成(任意)</summary>
+    <p class="set-note">無料APIキーを設定すると、Open-Meteoに加えて複数の予報を平均合成し、精度が安定します。キーがなくてもそのまま使えます。</p>
+    <label>Visual Crossing APIキー
+      <input id="vc-key" type="text" placeholder="visualcrossing.com で無料登録" autocomplete="off">
+    </label>
+    <label>OpenWeatherMap APIキー
+      <input id="owm-key" type="text" placeholder="openweathermap.org で無料登録" autocomplete="off">
+    </label>
+    <div class="set-row">
+      <button id="keys-save" type="button">保存して再取得</button>
+      <span id="keys-status"></span>
+    </div>
+    <p class="set-note">キーはこのPCのブラウザ内(localStorage)にのみ保存されます。このファイルを他人に公開する場合はキーを入れないでください。</p>
+  </details>
+
+  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択</footer>
+</div>
+
+<script>
+const WMO = {
+  0:["快晴","☀️"],1:["晴れ","🌤️"],2:["晴れ時々曇り","⛅"],3:["曇り","☁️"],
+  45:["霧","🌫️"],48:["霧","🌫️"],
+  51:["霧雨","🌦️"],53:["霧雨","🌦️"],55:["霧雨","🌦️"],
+  61:["雨","🌧️"],63:["雨","🌧️"],65:["大雨","🌧️"],66:["氷雨","🌧️"],67:["氷雨","🌧️"],
+  71:["雪","🌨️"],73:["雪","🌨️"],75:["大雪","❄️"],77:["大雪","❄️"],
+  80:["にわか雨","🌦️"],81:["にわか雨","🌦️"],82:["激しいにわか雨","⛈️"],
+  85:["にわか雪","🌨️"],86:["にわか雪","🌨️"],
+  95:["雷雨","⛈️"],96:["雹を伴う雷雨","⛈️"],99:["雹を伴う雷雨","⛈️"],
+};
+const wx = c => WMO[c] || ["不明","🌡️"];
+const DAYS = ["日","月","火","水","木","金","土"];
+
+const fmtAmt = v => v >= 10 ? Math.round(v) : Math.round(v * 10) / 10; // 10以上は整数、未満は小数1桁
+const $ = id => document.getElementById(id);
+const status = msg => { $("status").textContent = msg; };
+
+function setBackground(code, isDay) {
+  document.body.className = "";
+  if (!isDay) document.body.classList.add("wx-night");
+  else if (code >= 71 && code <= 86) document.body.classList.add("wx-snow");
+  else if (code >= 51) document.body.classList.add("wx-rain");
+  else if (code === 3) document.body.classList.add("wx-cloud");
+}
+
+async function geocode(name) {
+  const url = "https://geocoding-api.open-meteo.com/v1/search?name=" +
+    encodeURIComponent(name) + "&count=1&language=ja&format=json";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("都市検索に失敗しました");
+  const data = await res.json();
+  if (!data.results || !data.results.length) throw new Error("「" + name + "」が見つかりませんでした。別の表記で試してください。");
+  const r = data.results[0];
+  return { lat: r.latitude, lon: r.longitude,
+           label: r.name + (r.admin1 ? "・" + r.admin1 : "") + (r.country ? "(" + r.country + ")" : "") };
+}
+
+async function fetchForecast(lat, lon) {
+  const p = new URLSearchParams({
+    latitude: lat.toFixed(4), longitude: lon.toFixed(4),
+    current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,is_day",
+    hourly: "temperature_2m,weather_code,precipitation_probability,precipitation,snowfall",
+    minutely_15: "precipitation",
+    daily: "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,precipitation_sum,snowfall_sum",
+    timezone: "auto", forecast_days: "7", models: "best_match",
+  });
+  const res = await fetch("https://api.open-meteo.com/v1/forecast?" + p);
+  if (!res.ok) throw new Error("天気データの取得に失敗しました (HTTP " + res.status + ")");
+  return res.json();
+}
+
+// ─── 複数ソース合成(Visual Crossing / OpenWeatherMap) ───────
+const keys = {
+  get vc()  { return localStorage.getItem("vcKey")  || ""; },
+  get owm() { return localStorage.getItem("owmKey") || ""; },
+};
+
+async function fetchVC(lat, lon, key) {
+  const url = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/" +
+    lat.toFixed(4) + "," + lon.toFixed(4) +
+    "?unitGroup=metric&include=days%2Chours%2Ccurrent&contentType=json&key=" + encodeURIComponent(key);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Visual Crossing: HTTP " + res.status + (res.status === 401 ? "(キーを確認)" : ""));
+  const j = await res.json();
+  const hours = new Map();  // epoch秒 → 値
+  (j.days || []).forEach(day => (day.hours || []).forEach(h => {
+    hours.set(h.datetimeEpoch, { temp: h.temp, pop: h.precipprob, prec: h.precip, snow: h.snow });
+  }));
+  const days = new Map();   // "YYYY-MM-DD" → 値
+  (j.days || []).forEach(day => {
+    days.set(day.datetime, { max: day.tempmax, min: day.tempmin, pop: day.precipprob,
+                             prec: day.precip, snow: day.snow });
+  });
+  return { current: { temp: j.currentConditions?.temp, feels: j.currentConditions?.feelslike },
+           hours, days };
+}
+
+async function fetchOWM(lat, lon, key) {
+  const base = "lat=" + lat.toFixed(4) + "&lon=" + lon.toFixed(4) + "&units=metric&appid=" + encodeURIComponent(key);
+  const [curRes, fcRes] = await Promise.all([
+    fetch("https://api.openweathermap.org/data/2.5/weather?" + base),
+    fetch("https://api.openweathermap.org/data/2.5/forecast?" + base),
+  ]);
+  if (!curRes.ok || !fcRes.ok) {
+    const st = !curRes.ok ? curRes.status : fcRes.status;
+    throw new Error("OpenWeatherMap: HTTP " + st + (st === 401 ? "(キーを確認)" : ""));
+  }
+  const cur = await curRes.json();
+  const fc = await fcRes.json();
+  const items = (fc.list || []).map(it => ({
+    epoch: it.dt, temp: it.main?.temp, pop: (it.pop ?? 0) * 100,
+    prec: (it.rain?.["3h"] ?? 0) / 3, snow: (it.snow?.["3h"] ?? 0) / 3 / 10, // mm/h, cm/h換算
+  }));
+  return { current: { temp: cur.main?.temp, feels: cur.main?.feels_like }, items };
+}
+
+const avg = vals => {
+  const v = vals.filter(x => x != null && isFinite(x));
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+};
+const r1 = v => v == null ? null : Math.round(v * 10) / 10;
+
+// Open-Meteoの結果に他ソースを混ぜ込む(平均)。dは書き換えられる
+function blendInto(d, vc, owm) {
+  const off = d.utc_offset_seconds || 0;
+  const epochOf = t => Date.parse(t + ":00Z") / 1000 - off;        // OMのローカル時刻文字列→真のepoch
+  const dateOf = e => new Date((e + off) * 1000).toISOString().slice(0, 10);
+
+  // OWM 3時間刻み → 最も近い枠(±90分)を対応づけ
+  const owmNear = epoch => {
+    if (!owm) return null;
+    let best = null, bestGap = 5400;
+    for (const it of owm.items) {
+      const gap = Math.abs(it.epoch - epoch);
+      if (gap <= bestGap) { best = it; bestGap = gap; }
+    }
+    return best;
+  };
+  // OWM 日別集計(現地日付ごと)
+  const owmDays = new Map();
+  if (owm) for (const it of owm.items) {
+    const k = dateOf(it.epoch);
+    const o = owmDays.get(k) || { temps: [], pop: 0 };
+    o.temps.push(it.temp); o.pop = Math.max(o.pop, it.pop);
+    owmDays.set(k, o);
+  }
+
+  // 現在
+  d.current.temperature_2m = r1(avg([d.current.temperature_2m, vc?.current.temp, owm?.current.temp]));
+  d.current.apparent_temperature = r1(avg([d.current.apparent_temperature, vc?.current.feels, owm?.current.feels]));
+
+  // 1時間ごと
+  d.hourly.time.forEach((t, i) => {
+    const e = epochOf(t);
+    const v = vc?.hours.get(e);
+    const o = owmNear(e);
+    d.hourly.temperature_2m[i] = r1(avg([d.hourly.temperature_2m[i], v?.temp, o?.temp]));
+    d.hourly.precipitation_probability[i] =
+      Math.round(avg([d.hourly.precipitation_probability[i], v?.pop, o?.pop]) ?? 0);
+    d.hourly.precipitation[i] = r1(avg([d.hourly.precipitation[i], v?.prec, o?.prec]));
+    d.hourly.snowfall[i] = r1(avg([d.hourly.snowfall[i], v?.snow, o?.snow]));
+  });
+
+  // 週間
+  d.daily.time.forEach((t, i) => {
+    const v = vc?.days.get(t);
+    const o = owmDays.get(t);
+    d.daily.temperature_2m_max[i] =
+      r1(avg([d.daily.temperature_2m_max[i], v?.max, o ? Math.max(...o.temps) : null]));
+    d.daily.temperature_2m_min[i] =
+      r1(avg([d.daily.temperature_2m_min[i], v?.min, o ? Math.min(...o.temps) : null]));
+    d.daily.precipitation_probability_max[i] =
+      Math.round(avg([d.daily.precipitation_probability_max[i], v?.pop, o?.pop]) ?? 0);
+    d.daily.precipitation_sum[i] = r1(avg([d.daily.precipitation_sum[i], v?.prec]));
+    d.daily.snowfall_sum[i] = r1(avg([d.daily.snowfall_sum[i], v?.snow]));
+  });
+}
+
+// 3ソースをまとめて取得して合成。戻り値: { d, sources, warnings }
+async function fetchBlended(lat, lon) {
+  const jobs = [fetchForecast(lat, lon)];
+  const names = ["Open-Meteo"];
+  if (keys.vc)  { jobs.push(fetchVC(lat, lon, keys.vc));   names.push("Visual Crossing"); }
+  if (keys.owm) { jobs.push(fetchOWM(lat, lon, keys.owm)); names.push("OpenWeatherMap"); }
+
+  const results = await Promise.allSettled(jobs);
+  if (results[0].status === "rejected") throw results[0].reason;  // 基盤のOM失敗は致命的
+
+  const d = results[0].value;
+  const sources = ["Open-Meteo"]; const warnings = [];
+  let vc = null, owm = null;
+  for (let i = 1; i < results.length; i++) {
+    if (results[i].status === "fulfilled") {
+      if (names[i] === "Visual Crossing") vc = results[i].value;
+      else owm = results[i].value;
+      sources.push(names[i]);
+    } else {
+      warnings.push((results[i].reason?.message) || names[i] + "の取得に失敗");
+    }
+  }
+  if (vc || owm) blendInto(d, vc, owm);
+  return { d, sources, warnings };
+}
+
+// ☔ 今後4時間の雨: 15分ごとの降水量バーグラフ
+function renderNowcast(d) {
+  const sec = $("nowcast-sec");
+  const m15 = d.minutely_15;
+  if (!m15 || !m15.time || !m15.time.length) { sec.style.display = "none"; return; }
+  sec.style.display = "";
+
+  // 現在時刻を含む枠から16コマ(=4時間)
+  const now = new Date();
+  let start = m15.time.findIndex(t => new Date(t) > now) - 1;
+  if (start < 0) start = 0;
+  const times = m15.time.slice(start, start + 16);
+  const vals = m15.precipitation.slice(start, start + 16).map(v => v ?? 0);
+
+  const total = vals.reduce((a, b) => a + b, 0);
+  if (total <= 0) {
+    $("nowcast-sum").textContent = "";
+    $("nowcast").innerHTML = '<div class="nc-none">☂️ 今後4時間、雨の予想はありません</div>';
+    return;
+  }
+  $("nowcast-sum").textContent = "— 合計 約" + fmtAmt(total) + "mm";
+
+  const max = Math.max(0.5, ...vals);      // 小雨でもバーが見えるよう下限0.5mm
+  let bars = "", axis = "";
+  vals.forEach((v, i) => {
+    const h = Math.round(v / max * 100);
+    const cls = v <= 0 ? "" : v < 0.3 ? " r1" : v < 1 ? " r2" : " r3";
+    const label = v >= 0.1 ? '<span class="nc-val">' + fmtAmt(v) + '</span>' : "";
+    bars += '<div class="nc-col">' + label +
+            '<div class="nc-bar' + cls + '" style="height:' + h + '%"></div></div>';
+    // 時刻目盛りは1時間ごと(4コマおき)
+    const t = new Date(times[i]);
+    axis += '<div class="nc-tick">' +
+            (i % 4 === 0 ? t.getHours() + ":" + String(t.getMinutes()).padStart(2, "0") : "") +
+            '</div>';
+  });
+  $("nowcast").innerHTML =
+    '<div class="nc-chart">' + bars + '</div><div class="nc-axis">' + axis + '</div>';
+}
+
+function render(label, d, sources, warnings) {
+  const c = d.current;
+  const [descText, emoji] = wx(c.weather_code);
+  setBackground(c.weather_code, c.is_day === 1);
+
+  $("place").textContent = label;
+  $("sources").textContent = (sources && sources.length > 1
+    ? "🎯 " + sources.length + "ソース合成: " + sources.join(" + ")
+    : "データ: Open-Meteo") +
+    (warnings && warnings.length ? " ⚠️ " + warnings.join(" / ") : "");
+  $("now-temp").textContent = Math.round(c.temperature_2m) + "°";
+  $("now-desc").textContent = emoji + " " + descText;
+  $("now-meta").innerHTML =
+    "<span>体感 " + Math.round(c.apparent_temperature) + "°</span>" +
+    "<span>湿度 " + c.relative_humidity_2m + "%</span>" +
+    "<span>風 " + Math.round(c.wind_speed_10m) + " km/h</span>";
+
+  // 1時間ごと: 現在時刻以降の24時間
+  const nowIdx = Math.max(0, d.hourly.time.findIndex(t => new Date(t) >= new Date()) - 1);
+  let hourlyHtml = "";
+  for (let i = nowIdx; i < Math.min(nowIdx + 24, d.hourly.time.length); i++) {
+    const t = new Date(d.hourly.time[i]);
+    const pop = d.hourly.precipitation_probability[i] ?? 0;
+    const snow = d.hourly.snowfall[i] ?? 0;          // cm
+    const prec = d.hourly.precipitation[i] ?? 0;     // mm
+    const amt = snow > 0 ? "❄" + fmtAmt(snow) + "cm"
+              : prec > 0 ? fmtAmt(prec) + "mm" : "－";
+    hourlyHtml +=
+      '<div class="hour">' +
+        '<div class="h-time">' + t.getHours() + '時</div>' +
+        '<div class="h-emoji">' + wx(d.hourly.weather_code[i])[1] + '</div>' +
+        '<div class="h-temp">' + Math.round(d.hourly.temperature_2m[i]) + '°</div>' +
+        '<div class="h-pop' + (pop >= 50 ? ' wet' : '') + '">💧' + pop + '%</div>' +
+        '<div class="h-amt' + (snow > 0 || prec > 0 ? ' wet' : '') + '">' + amt + '</div>' +
+      '</div>';
+  }
+  $("hourly").innerHTML = hourlyHtml;
+
+  renderNowcast(d);
+
+  // 週間: 温度レンジをバーで可視化
+  const weekMin = Math.min(...d.daily.temperature_2m_min);
+  const weekMax = Math.max(...d.daily.temperature_2m_max);
+  const span = Math.max(1, weekMax - weekMin);
+  let dailyHtml = "";
+  d.daily.time.forEach((t, i) => {
+    const date = new Date(t + "T00:00");
+    const name = (i === 0 ? "今日" : DAYS[date.getDay()] + "曜") + " " + date.getDate() + "日";
+    const lo = d.daily.temperature_2m_min[i], hi = d.daily.temperature_2m_max[i];
+    const pop = d.daily.precipitation_probability_max[i] ?? 0;
+    const dSnow = d.daily.snowfall_sum[i] ?? 0;        // cm
+    const dPrec = d.daily.precipitation_sum[i] ?? 0;   // mm
+    const dAmt = dSnow > 0 ? "❄" + fmtAmt(dSnow) + "cm"
+               : dPrec > 0 ? fmtAmt(dPrec) + "mm" : "";
+    const left = ((lo - weekMin) / span * 100).toFixed(1);
+    const width = ((hi - lo) / span * 100).toFixed(1);
+    dailyHtml +=
+      '<div class="day">' +
+        '<div class="d-name">' + name + '</div>' +
+        '<div>' + wx(d.daily.weather_code[i])[1] + '</div>' +
+        '<div class="d-pop' + (pop >= 50 ? ' wet' : '') + '">💧' + pop + '%' +
+          (dAmt ? '<span class="d-amt">' + dAmt + '</span>' : '') + '</div>' +
+        '<div class="d-bar"><span style="left:' + left + '%;width:' + width + '%"></span></div>' +
+        '<div class="d-range"><span class="d-min">' + Math.round(lo) + '°</span> / <span class="d-max">' + Math.round(hi) + '°</span></div>' +
+      '</div>';
+  });
+  $("daily").innerHTML = dailyHtml;
+
+  $("result").classList.remove("hidden");
+  status("");
+  radar.load(d.latitude, d.longitude);
+  loadAlerts(d.latitude, d.longitude, d);
+  // 非表示状態で初期化された地図のサイズを補正
+  if (radar.map) setTimeout(() => radar.map.invalidateSize(), 50);
+}
+
+// ─── 雨雲レーダー(RainViewer) ───────────────────────────
+const radar = {
+  map: null, marker: null, layers: [], frames: [], idx: 0, timer: null,
+  data: null, mode: "rain",
+
+  init(lat, lon) {
+    if (typeof L === "undefined") {
+      $("radar-map").innerHTML =
+        '<p style="padding:20px;font-size:13px;color:var(--ink-soft)">地図ライブラリを読み込めませんでした(インターネット接続を確認してください)</p>';
+      return false;
+    }
+    if (!this.map) {
+      this.map = L.map("radar-map", { zoomControl: true }).setView([lat, lon], 8);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; OpenStreetMap | レーダー: RainViewer', maxZoom: 12,
+      }).addTo(this.map);
+      this.marker = L.circleMarker([lat, lon], {
+        radius: 7, color: "#2563a8", weight: 2, fillColor: "#fff", fillOpacity: 0.9,
+      }).addTo(this.map);
+    } else {
+      this.map.setView([lat, lon], 8);
+      this.marker.setLatLng([lat, lon]);
+    }
+    return true;
+  },
+
+  async load(lat, lon) {
+    if (!this.init(lat, lon)) return;
+    // LibreWXR(衛星・予測あり)を優先し、失敗時はRainViewerへフォールバック
+    const sources = [
+      "https://api.librewxr.net/public/weather-maps.json",
+      "https://api.rainviewer.com/public/weather-maps.json",
+    ];
+    this.data = null;
+    for (const url of sources) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        this.data = await res.json();
+        break;
+      } catch (e) { /* 次のソースを試す */ }
+    }
+    if (!this.data) {
+      $("radar-time").textContent = "レーダーデータを取得できませんでした";
+      return;
+    }
+    this.build();
+  },
+
+  // 現在のモード(雨雲 or 衛星)に応じてフレームとタイルを構築
+  build() {
+    this.stop();
+    this.layers.forEach(l => this.map.removeLayer(l));
+    this.layers = []; this.frames = [];
+    const data = this.data;
+    if (!data) return;
+
+    if (this.mode === "rain") {
+      // 過去2時間 + 今後の予測(提供されている場合)
+      const past = data.radar?.past || [];
+      const nowcast = data.radar?.nowcast || [];
+      this.frames = [
+        ...past.map(f => ({ ...f, fcst: false })),
+        ...nowcast.map(f => ({ ...f, fcst: true })),
+      ];
+      if (!this.frames.length) {
+        $("radar-time").textContent = "雨雲データが現在提供されていません";
+        return;
+      }
+      this.frames.forEach(f => {
+        this.layers.push(L.tileLayer(
+          data.host + f.path + "/256/{z}/{x}/{y}/2/1_1.png",
+          { opacity: 0, maxZoom: 12 }
+        ).addTo(this.map));
+      });
+      // 初期表示は「最新の実況」フレーム
+      this.idx = Math.max(0, past.length - 1);
+    } else {
+      // 赤外衛星画像(雲の分布)。実況のみ
+      const sat = data.satellite?.infrared || [];
+      if (!sat.length) {
+        $("radar-time").textContent = "衛星画像がこのデータ源では提供されていません";
+        return;
+      }
+      this.frames = sat.map(f => ({ ...f, fcst: false }));
+      this.frames.forEach(f => {
+        this.layers.push(L.tileLayer(
+          data.host + f.path + "/256/{z}/{x}/{y}/0/0_0.png",
+          { opacity: 0, maxZoom: 12 }
+        ).addTo(this.map));
+      });
+      this.idx = this.frames.length - 1;
+    }
+    this.show(this.idx);
+  },
+
+  setMode(mode) {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    document.querySelectorAll(".radar-mode").forEach(b =>
+      b.classList.toggle("active", b.dataset.mode === mode));
+    this.build();
+  },
+
+  show(i) {
+    const op = this.mode === "rain" ? 0.65 : 0.5;
+    this.layers.forEach((l, k) => l.setOpacity(k === i ? op : 0));
+    const f = this.frames[i];
+    if (!f) return;
+    const t = new Date(f.time * 1000);
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    $("radar-time").innerHTML = hh + ":" + mm +
+      (f.fcst ? ' <span class="fcst">予測</span>' : "(実況)");
+  },
+
+  step() {
+    this.idx = (this.idx + 1) % this.frames.length;
+    this.show(this.idx);
+  },
+
+  play() {
+    if (!this.frames.length) return;
+    this.timer = setInterval(() => this.step(), 650);
+    $("radar-play").textContent = "⏸ 停止";
+  },
+
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    $("radar-play").textContent = "▶ 再生";
+  },
+
+  toggle() { this.timer ? this.stop() : this.play(); },
+};
+
+$("radar-play").addEventListener("click", () => radar.toggle());
+document.querySelectorAll(".radar-mode").forEach(b =>
+  b.addEventListener("click", () => radar.setMode(b.dataset.mode)));
+
+// ─── ⚠️ 気象アラート ─────────────────────────────
+// 英語のイベント名 → 日本語・絵文字(キーワード一致)
+const EVENT_JA = [
+  [/tornado/i, "竜巻", "🌪️"],
+  [/hurricane|typhoon|cyclone/i, "台風・ハリケーン", "🌀"],
+  [/thunder|lightning|storm/i, "雷・激しい嵐", "⛈️"],
+  [/extreme heat|excessive heat|heat/i, "高温・熱中症", "🥵"],
+  [/extreme cold|cold|freeze|frost|wind chill/i, "寒波・低温", "🥶"],
+  [/fire|red flag/i, "山火事(火災気象)", "🔥"],
+  [/flood/i, "洪水", "🌊"],
+  [/blizzard|snow|ice|winter/i, "大雪・着氷", "❄️"],
+  [/wind|gale/i, "強風", "💨"],
+  [/fog/i, "濃霧", "🌫️"],
+  [/rain/i, "大雨", "🌧️"],
+  [/surf|tide|coastal|marine|tsunami/i, "高波・沿岸", "🌊"],
+  [/air quality|smoke|dust/i, "大気質", "😷"],
+];
+function eventJa(name) {
+  for (const [re, ja, emoji] of EVENT_JA) if (re.test(name)) return { ja, emoji };
+  return { ja: name, emoji: "⚠️" };
+}
+const SEV_ORDER = { extreme: 0, severe: 1, moderate: 2, minor: 3, unknown: 4 };
+function sevClass(s) {
+  s = (s || "").toLowerCase();
+  return SEV_ORDER[s] != null && s !== "unknown" ? "sev-" + s : "sev-minor";
+}
+const SEV_JA = { extreme: "危険(最上位)", severe: "警報級", moderate: "注意報級", minor: "留意" };
+
+async function fetchAlerts(lat, lon) {
+  try {
+    const res = await fetch("https://api.librewxr.net/v2/alerts?lat=" +
+      lat.toFixed(4) + "&lon=" + lon.toFixed(4));
+    if (!res.ok) return [];
+    const j = await res.json();
+    const feats = j.features || [];
+    const now = Date.now();
+    return feats
+      .map(f => f.properties || {})
+      .filter(p => {
+        const ends = p.ends || p.expires;
+        return !ends || Date.parse(ends) > now;  // 失効済みは除外
+      })
+      .sort((a, b) => (SEV_ORDER[(a.severity || "").toLowerCase()] ?? 4) -
+                      (SEV_ORDER[(b.severity || "").toLowerCase()] ?? 4))
+      .slice(0, 6);
+  } catch (e) { return []; }
+}
+
+// 予報データからアプリ独自の注意を判定(公式警報の代わりではなく補助)
+function computeAdvisories(d) {
+  const out = [];
+  const feel = d.current.apparent_temperature;
+  // 今後24時間の気温ピークも見る(現在は涼しくても日中危険なケース)
+  const temps24 = d.hourly.temperature_2m.slice(0, 24).filter(v => v != null);
+  const maxFeel = Math.max(feel, ...temps24);
+  if (feel >= 38 || maxFeel >= 38) {
+    out.push({ sev: "severe", emoji: "🥵", title: "熱中症の危険(アプリ判定)",
+      body: "体感温度が38°C以上に達する見込みです。屋外活動を避け、水分・塩分をこまめに補給してください。" });
+  } else if (feel >= 33 || maxFeel >= 35) {
+    out.push({ sev: "moderate", emoji: "🥵", title: "熱中症に注意(アプリ判定)",
+      body: "体感温度が高くなっています。こまめな水分補給と休憩を心がけてください。" });
+  }
+  const minToday = Math.min(...temps24);
+  if (minToday <= -15) {
+    out.push({ sev: "severe", emoji: "🥶", title: "厳しい寒波(アプリ判定)",
+      body: "今後24時間で気温が-15°C以下まで下がる見込みです。凍傷・水道管凍結・路面凍結に警戒してください。" });
+  } else if (minToday <= -8) {
+    out.push({ sev: "moderate", emoji: "🥶", title: "強い冷え込みに注意(アプリ判定)",
+      body: "今後24時間で気温が-8°C以下まで下がる見込みです。防寒と路面凍結に注意してください。" });
+  }
+  // 雷を伴う予報(WMOコード95以上)が24時間以内にあるか
+  if (d.hourly.weather_code.slice(0, 24).some(c => c >= 95)) {
+    out.push({ sev: "moderate", emoji: "⛈️", title: "雷雨の可能性(アプリ判定)",
+      body: "今後24時間以内に雷を伴う天気が予想されています。屋外活動の際は空模様に注意してください。" });
+  }
+  return out;
+}
+
+function fmtAlertTime(s) {
+  if (!s) return "";
+  const t = new Date(s);
+  return isNaN(t) ? "" : (t.getMonth() + 1) + "/" + t.getDate() + " " +
+    String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
+}
+
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function renderAlerts(official, advisories) {
+  let html = "";
+  for (const p of official) {
+    const ev = eventJa(p.event || p.headline || "警報");
+    const sev = (p.severity || "").toLowerCase();
+    const until = fmtAlertTime(p.ends || p.expires);
+    html +=
+      '<details class="alert ' + sevClass(sev) + '">' +
+        '<summary>' + ev.emoji + ' ' + ev.ja +
+          (SEV_JA[sev] ? "【" + SEV_JA[sev] + "】" : "") + '</summary>' +
+        '<div class="a-body">' +
+          esc(p.headline || p.event || "") +
+          (p.description ? "\n\n" + esc(String(p.description).slice(0, 600)) : "") + '</div>' +
+        '<div class="a-meta">発表: 公的機関(' + esc(p.event || "") + ')' +
+          (until ? " ・ " + until + "まで" : "") + '</div>' +
+      '</details>';
+  }
+  for (const a of advisories) {
+    html +=
+      '<details class="alert ' + sevClass(a.sev) + '">' +
+        '<summary>' + a.emoji + ' ' + a.title + '</summary>' +
+        '<div class="a-body">' + a.body + '</div>' +
+        '<div class="a-meta">予報データからの自動判定です。公式警報は各国気象機関の発表をご確認ください。</div>' +
+      '</details>';
+  }
+  $("alerts").innerHTML = html;
+}
+
+async function loadAlerts(lat, lon, d) {
+  renderAlerts([], computeAdvisories(d));            // まず即時にアプリ判定を表示
+  const official = await fetchAlerts(lat, lon);      // 公式警報は取得でき次第追加
+  renderAlerts(official, computeAdvisories(d));
+}
+
+async function showCity(name) {
+  try {
+    status("「" + name + "」を検索中…");
+    const g = await geocode(name);
+    status("予報を取得中…");
+    const { d, sources, warnings } = await fetchBlended(g.lat, g.lon);
+    render(g.label, d, sources, warnings);
+    localStorage.setItem("lastCity", name);
+  } catch (e) { status("⚠️ " + e.message); }
+}
+
+function showHere() {
+  if (!navigator.geolocation) { status("⚠️ このブラウザは位置情報に対応していません。都市名で検索してください。"); return; }
+  status("現在地を取得中…");
+  navigator.geolocation.getCurrentPosition(async pos => {
+    try {
+      status("予報を取得中…");
+      const { d, sources, warnings } = await fetchBlended(pos.coords.latitude, pos.coords.longitude);
+      render("現在地", d, sources, warnings);
+    } catch (e) { status("⚠️ " + e.message); }
+  }, () => status("⚠️ 位置情報を取得できませんでした。都市名で検索してください。"));
+}
+
+// ─── ⚙️ APIキー設定 ─────────────────────────────
+$("vc-key").value = keys.vc;
+$("owm-key").value = keys.owm;
+$("keys-save").addEventListener("click", () => {
+  localStorage.setItem("vcKey", $("vc-key").value.trim());
+  localStorage.setItem("owmKey", $("owm-key").value.trim());
+  $("keys-status").textContent = "保存しました。予報を再取得します…";
+  const last = localStorage.getItem("lastCity");
+  if (last) showCity(last);
+  setTimeout(() => { $("keys-status").textContent = ""; }, 4000);
+});
+
+$("search-btn").addEventListener("click", () => {
+  const v = $("city-input").value.trim();
+  if (v) showCity(v);
+});
+$("city-input").addEventListener("keydown", e => {
+  if (e.key === "Enter") { const v = e.target.value.trim(); if (v) showCity(v); }
+});
+$("geo-btn").addEventListener("click", showHere);
+
+// 前回の都市があれば自動表示、なければ東京
+showCity(localStorage.getItem("lastCity") || "東京");
+</script>
+</body>
+</html>
