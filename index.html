@@ -59,6 +59,8 @@
   button:hover { filter: brightness(1.1); }
   button:focus-visible { outline: 3px solid rgba(37,99,168,0.4); outline-offset: 2px; }
   #geo-btn { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  #refresh-btn { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  .updated { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
 
   #status { color: var(--ink-soft); font-size: 14px; margin-bottom: 16px; min-height: 1.4em; }
 
@@ -310,6 +312,7 @@
     <input id="city-input" type="text" placeholder="都市名を入力(例: 東京、Paris、New York)" autocomplete="off">
     <button id="search-btn">検索</button>
     <button id="geo-btn" title="現在地の天気">📍</button>
+    <button id="refresh-btn" title="最新の天気に更新">🔄</button>
   </header>
 
   <div id="cands" class="hidden"></div>
@@ -379,7 +382,7 @@
     <p class="set-note">キーはこのPCのブラウザ内(localStorage)にのみ保存されます。このファイルを他人に公開する場合はキーを入れないでください。</p>
   </details>
 
-  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v2.6</b></footer>
+  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v2.7</b></footer>
 </div>
 
 <script>
@@ -960,10 +963,13 @@ function render(label, d, sources, warnings, loc) {
   setBackground(c.weather_code, c.is_day === 1);
 
   $("place").textContent = label;
-  $("sources").textContent = (sources && sources.length > 1
+  $("sources").innerHTML = ((sources && sources.length > 1
     ? "🎯 " + sources.length + "ソース合成: " + sources.join(" + ")
     : "データ: Open-Meteo") +
-    (warnings && warnings.length ? " ⚠️ " + warnings.join(" / ") : "");
+    (warnings && warnings.length ? " ⚠️ " + warnings.join(" / ") : "")) +
+    '<div class="updated">更新: ' +
+      String(new Date().getHours()).padStart(2, "0") + ":" +
+      String(new Date().getMinutes()).padStart(2, "0") + '</div>';
   $("now-temp").textContent = Math.round(c.temperature_2m) + "°";
   $("now-desc").textContent = emoji + " " + descText;
   $("now-meta").innerHTML =
@@ -1483,6 +1489,33 @@ try {
 } catch (e) {
   showCity(localStorage.getItem("lastCity") || "東京");
 }
+
+// ─── 🔄 自動更新 ─────────────────────────────
+// お気に入りの気温も表示中の都市も、時間が経てば古くなるので定期的に取り直す
+let lastRefresh = Date.now();
+
+function refreshAll(force) {
+  // 5分以上経っていなければ何もしない(通信の無駄打ちを避ける)
+  if (!force && Date.now() - lastRefresh < 5 * 60 * 1000) return;
+  lastRefresh = Date.now();
+  updateFavWeather();                    // タブの気温を更新
+  if (currentLoc) showLoc(currentLoc);   // 表示中の都市の詳細も更新
+}
+
+// 10分ごとに自動更新
+setInterval(() => refreshAll(false), 10 * 60 * 1000);
+
+// アプリに戻ってきたとき(ホーム画面から再度開く・タブを切り替える)に更新
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshAll(false);
+});
+addEventListener("focus", () => refreshAll(false));
+
+// 🔄 更新ボタン(いつでも手動で最新化)
+$("refresh-btn").addEventListener("click", () => {
+  status("最新の天気を取得中…");
+  refreshAll(true);
+});
 </script>
 </body>
 </html>
