@@ -382,7 +382,7 @@
     <p class="set-note">キーはこのPCのブラウザ内(localStorage)にのみ保存されます。このファイルを他人に公開する場合はキーを入れないでください。</p>
   </details>
 
-  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v2.7</b></footer>
+  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v2.9</b></footer>
 </div>
 
 <script>
@@ -397,6 +397,21 @@ const WMO = {
   95:["雷雨","⛈️"],96:["雹を伴う雷雨","⛈️"],99:["雹を伴う雷雨","⛈️"],
 };
 const wx = c => WMO[c] || ["不明","🌡️"];
+
+// ☁️ 天気コードを実際の雲量で補正する
+// Open-Meteoの天気コードは晴れ/曇りの判定がモデル任せで甘いことがあるため、
+// 降水がない場合に限り、cloud_cover(雲量%)から晴れ〜曇りを引き直す。
+// 降水・雪・雷・霧のコードはそのまま尊重する(これらは信頼度が高い)。
+function correctCode(code, cloud) {
+  if (cloud == null) return code;
+  // 降水を伴うコード(45以上)は補正しない
+  if (code >= 45) return code;
+  // 快晴〜曇り(0〜3)の範囲だけを雲量で引き直す
+  if (cloud < 15) return 0;   // 快晴
+  if (cloud < 45) return 1;   // 晴れ
+  if (cloud < 80) return 2;   // 晴れ時々曇り
+  return 3;                   // 曇り
+}
 const DAYS = ["日","月","火","水","木","金","土"];
 
 const fmtAmt = v => v >= 10 ? Math.round(v) : Math.round(v * 10) / 10; // 10以上は整数、未満は小数1桁
@@ -673,11 +688,54 @@ function showCandidates(list, name) {
 }
 function hideCandidates() { $("cands").classList.add("hidden"); $("cands").innerHTML = ""; }
 
+// ─── 🇺🇸 アメリカ気象局(NWS)の実況観測データ ───────────
+// Open-Meteoのweather_codeは晴れ/曇り判定が甘いことがあるため、
+// アメリカ国内では実際の観測所の値(cloudLayers)から天気を引き直す。
+const nwsCache = {};  // 座標→観測所URLのキャッシュ
+
+async function fetchNWSCurrent(lat, lon) {
+  const key = lat.toFixed(2) + "," + lon.toFixed(2);
+  try {
+    let stationUrl = nwsCache[key];
+    if (!stationUrl) {
+      const pRes = await fetch("https://api.weather.gov/points/" + lat.toFixed(4) + "," + lon.toFixed(4));
+      if (!pRes.ok) return null;  // アメリカ国外は404 → nullで通常処理へ
+      const pJson = await pRes.json();
+      const stListUrl = pJson.properties?.observationStations;
+      if (!stListUrl) return null;
+      const sRes = await fetch(stListUrl);
+      if (!sRes.ok) return null;
+      const sJson = await sRes.json();
+      stationUrl = sJson.features?.[0]?.id;  // 最寄りの観測所
+      if (!stationUrl) return null;
+      nwsCache[key] = stationUrl;
+    }
+    const oRes = await fetch(stationUrl + "/observations/latest");
+    if (!oRes.ok) return null;
+    const o = (await oRes.json()).properties;
+    if (!o) return null;
+
+    // 雲量: 雲層(cloudLayers)の被覆度から総雲量を推定
+    let cover = null;
+    if (Array.isArray(o.cloudLayers) && o.cloudLayers.length) {
+      const map = { CLR: 0, SKC: 0, FEW: 20, SCT: 40, BKN: 75, OVC: 100, VV: 100 };
+      cover = Math.max(0, ...o.cloudLayers.map(l => map[l.amount] ?? 0));
+    } else if (Array.isArray(o.cloudLayers)) {
+      cover = 0;  // 空配列 = 雲なし(快晴)
+    }
+    return {
+      temp: o.temperature?.value,                 // °C
+      humidity: o.relativeHumidity?.value,        // %
+      cloudCover: cover,
+    };
+  } catch (e) { return null; }
+}
+
 async function fetchForecast(lat, lon) {
   const p = new URLSearchParams({
     latitude: lat.toFixed(4), longitude: lon.toFixed(4),
-    current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,is_day",
-    hourly: "temperature_2m,weather_code,precipitation_probability,precipitation,snowfall,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+    current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,is_day,cloud_cover",
+    hourly: "temperature_2m,weather_code,precipitation_probability,precipitation,snowfall,wind_speed_10m,wind_direction_10m,wind_gusts_10m,cloud_cover",
     minutely_15: "precipitation",
     daily: "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,precipitation_sum,snowfall_sum,wind_speed_10m_max",
     timezone: "auto", forecast_days: "7", models: "best_match",
@@ -808,6 +866,7 @@ async function fetchBlended(lat, lon) {
   const names = ["Open-Meteo"];
   if (keys.vc)  { jobs.push(fetchVC(lat, lon, keys.vc));   names.push("Visual Crossing"); }
   if (keys.owm) { jobs.push(fetchOWM(lat, lon, keys.owm)); names.push("OpenWeatherMap"); }
+  const nwsJob = fetchNWSCurrent(lat, lon);   // アメリカ実況(国外はnull)
 
   const results = await Promise.allSettled(jobs);
   if (results[0].status === "rejected") throw results[0].reason;  // 基盤のOM失敗は致命的
@@ -825,6 +884,15 @@ async function fetchBlended(lat, lon) {
     }
   }
   if (vc || owm) blendInto(d, vc, owm);
+
+  // アメリカ国内: 実測の雲量で現在の天気を上書き(「曇りなのに快晴」の根本対策)
+  const nws = await nwsJob;
+  if (nws) {
+    if (nws.cloudCover != null) d.current.cloud_cover = nws.cloudCover;
+    if (nws.temp != null) d.current.temperature_2m = Math.round(nws.temp * 10) / 10;
+    if (nws.humidity != null) d.current.relative_humidity_2m = Math.round(nws.humidity);
+    sources.push("NWS実況");
+  }
   return { d, sources, warnings };
 }
 
@@ -959,8 +1027,9 @@ function renderWindChart(d, nowIdx) {
 function render(label, d, sources, warnings, loc) {
   currentLoc = loc || { label, lat: d.latitude, lon: d.longitude };
   const c = d.current;
-  const [descText, emoji] = wx(c.weather_code);
-  setBackground(c.weather_code, c.is_day === 1);
+  const code = correctCode(c.weather_code, c.cloud_cover);
+  const [descText, emoji] = wx(code);
+  setBackground(code, c.is_day === 1);
 
   $("place").textContent = label;
   $("sources").innerHTML = ((sources && sources.length > 1
@@ -990,7 +1059,7 @@ function render(label, d, sources, warnings, loc) {
     hourlyHtml +=
       '<div class="hour">' +
         '<div class="h-time">' + t.getHours() + '時</div>' +
-        '<div class="h-emoji">' + wx(d.hourly.weather_code[i])[1] + '</div>' +
+        '<div class="h-emoji">' + wx(correctCode(d.hourly.weather_code[i], d.hourly.cloud_cover?.[i]))[1] + '</div>' +
         '<div class="h-temp">' + Math.round(d.hourly.temperature_2m[i]) + '°</div>' +
         '<div class="h-pop' + (pop >= 50 ? ' wet' : '') + '">💧' + pop + '%</div>' +
         '<div class="h-amt' + (snow > 0 || prec > 0 ? ' wet' : '') + '">' + amt + '</div>' +
@@ -1365,7 +1434,7 @@ async function updateFavWeather() {
     const p = new URLSearchParams({
       latitude: favs.map(f => f.lat.toFixed(3)).join(","),
       longitude: favs.map(f => f.lon.toFixed(3)).join(","),
-      current: "temperature_2m,weather_code,is_day",
+      current: "temperature_2m,weather_code,is_day,cloud_cover",
       timezone: "auto",
     });
     const res = await fetch("https://api.open-meteo.com/v1/forecast?" + p);
@@ -1375,13 +1444,14 @@ async function updateFavWeather() {
     arr.forEach((r, i) => {
       const el = $("fav-now-" + i);
       if (el && r.current) {
-        el.textContent = wx(r.current.weather_code)[1] + " " +
+        const fcode = correctCode(r.current.weather_code, r.current.cloud_cover);
+        el.textContent = wx(fcode)[1] + " " +
                          Math.round(r.current.temperature_2m) + "°";
         // タブの背景をその都市の天気に合わせる
         const chip = el.closest(".fav");
         if (chip) {
           chip.classList.remove(...FAV_WX_ALL);
-          favWxClass(r.current.weather_code, r.current.is_day === 1)
+          favWxClass(fcode, r.current.is_day === 1)
             .split(" ").forEach(cl => chip.classList.add(cl));
         }
       }
