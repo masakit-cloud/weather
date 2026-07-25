@@ -382,7 +382,7 @@
     <p class="set-note">キーはこのPCのブラウザ内(localStorage)にのみ保存されます。このファイルを他人に公開する場合はキーを入れないでください。</p>
   </details>
 
-  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v2.9</b></footer>
+  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v3.0</b></footer>
 </div>
 
 <script>
@@ -1456,7 +1456,26 @@ async function updateFavWeather() {
         }
       }
     });
+    // アメリカの都市はNWS実況で上書き(メイン画面と同じ正確さに)
+    favs.forEach((f, i) => refineFavWithNWS(f, i, arr[i]?.current?.is_day === 1));
   } catch (e) { /* 一覧の気温だけなので静かに失敗 */ }
+}
+
+// お気に入り1都市をNWS実況で更新(アメリカ国外はnullで何もしない)
+async function refineFavWithNWS(f, i, isDay) {
+  const nws = await fetchNWSCurrent(f.lat, f.lon);
+  if (!nws || nws.cloudCover == null) return;
+  const el = $("fav-now-" + i);
+  if (!el) return;
+  // NWSは天気コードを持たないので、実測雲量を晴れ〜曇りコードに変換
+  const fcode = correctCode(0, nws.cloudCover);
+  const temp = nws.temp != null ? Math.round(nws.temp) : "";
+  el.textContent = wx(fcode)[1] + (temp !== "" ? " " + temp + "°" : "");
+  const chip = el.closest(".fav");
+  if (chip) {
+    chip.classList.remove(...FAV_WX_ALL);
+    favWxClass(fcode, isDay).split(" ").forEach(cl => chip.classList.add(cl));
+  }
 }
 
 function updateFavBtn() {
