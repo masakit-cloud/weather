@@ -309,7 +309,7 @@
 <canvas id="fx"></canvas>
 <div class="wrap">
   <header>
-    <input id="city-input" type="text" placeholder="都市名を入力(例: 東京、Paris、New York)" autocomplete="off">
+    <input id="city-input" type="text" placeholder="都市名・住所で検索(例: 東京、123 Main St, Gibsonia)" autocomplete="off">
     <button id="search-btn">検索</button>
     <button id="geo-btn" title="現在地の天気">📍</button>
     <button id="refresh-btn" title="最新の天気に更新">🔄</button>
@@ -382,7 +382,7 @@
     <p class="set-note">キーはこのPCのブラウザ内(localStorage)にのみ保存されます。このファイルを他人に公開する場合はキーを入れないでください。</p>
   </details>
 
-  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v3.0</b></footer>
+  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v3.1</b></footer>
 </div>
 
 <script>
@@ -622,40 +622,62 @@ async function searchOM(name) {
   });
 }
 
-async function searchOSM(name) {
+async function searchOSM(name, addressMode) {
   try {
     const url = "https://nominatim.openstreetmap.org/search?format=json&limit=6" +
-      "&accept-language=ja&addressdetails=1&featureType=settlement&q=" + encodeURIComponent(name);
+      "&accept-language=ja&addressdetails=1" +
+      (addressMode ? "" : "&featureType=settlement") +   // 住所モードでは建物・番地レベルまで検索
+      "&q=" + encodeURIComponent(name);
     const res = await fetch(url);
     if (!res.ok) return [];
     const arr = await res.json();
     return arr.map(r => {
       const a = r.address || {};
-      const nm = a.city || a.town || a.village || r.name ||
-                 (r.display_name || "").split(",")[0].trim();
+      const city = a.city || a.town || a.village || a.municipality || "";
       const admin = a.state || a.province || a.county || "";
+      let nm, area, label;
+      if (addressMode) {
+        // 住所: 「番地+通り」を名前に、市・州・国を補足に
+        const road = [a.house_number, a.road].filter(Boolean).join(" ");
+        nm = road || r.name || (r.display_name || "").split(",")[0].trim();
+        area = [a.suburb, city, admin, a.country].filter(Boolean).join("・");
+        label = "📍 " + nm + (city ? "・" + city : "") + (admin ? "・" + admin : "");
+      } else {
+        nm = city || r.name || (r.display_name || "").split(",")[0].trim();
+        area = [admin, a.country].filter(Boolean).join("・");
+        label = nm + (admin ? "・" + admin : "") + (a.country ? "(" + a.country + ")" : "");
+      }
       return {
         lat: +r.lat, lon: +r.lon,
         name: nm,
         matchNames: [nm, r.name || ""],
-        area: [admin, a.country].filter(Boolean).join("・"),
-        label: nm + (admin ? "・" + admin : "") + (a.country ? "(" + a.country + ")" : ""),
+        area, label,
         // Nominatimは人口を返さないため、地名の重要度スコアを人口相当に換算して順位付け
         pop: Math.round((r.importance || 0.2) * 1e7),
-        osm: true,
+        osm: true, isAddr: !!addressMode,
       };
     }).filter(c => isFinite(c.lat) && isFinite(c.lon));
   } catch (e) { return []; }
 }
 
 async function geocodeList(name) {
-  const [om, osm] = await Promise.all([searchOM(name), searchOSM(name)]);
+  // 数字・カンマ・丁目/番地/通り名などを含むなら「住所」とみなして詳細検索も行う
+  const addressLike = /\d|,|丁目|番地|番|号|St\b|Ave\b|Rd\b|Dr\b|Drive|Street|Avenue|Road|Lane|Blvd/i.test(name);
+  const [om, osmCity, osmAddr] = await Promise.all([
+    searchOM(name),
+    searchOSM(name, false),
+    addressLike ? searchOSM(name, true) : Promise.resolve([]),
+  ]);
   const q = name.trim().toLowerCase();
-  // Open-Meteo優先で結合し、ほぼ同一地点はまとめる
+  // 住所らしい入力なら住所の結果を最優先に、それ以外は都市を優先して結合
+  const ordered = addressLike ? [...osmAddr, ...om, ...osmCity] : [...om, ...osmCity, ...osmAddr];
   const merged = [];
-  for (const c of [...om, ...osm]) {
-    if (merged.some(s => Math.abs(s.lat - c.lat) < 0.08 && Math.abs(s.lon - c.lon) < 0.08)) continue;
-    c.exact = (c.matchNames || []).some(n => (n || "").toLowerCase() === q) ? 1 : 0;
+  for (const c of ordered) {
+    // 住所同士は近くても別物(隣の通りなど)なので重複判定を細かく
+    const tol = c.isAddr ? 0.003 : 0.08;
+    if (merged.some(s => Math.abs(s.lat - c.lat) < tol && Math.abs(s.lon - c.lon) < tol)) continue;
+    c.exact = (c.isAddr && addressLike) ? 1 :
+      (c.matchNames || []).some(n => (n || "").toLowerCase() === q) ? 1 : 0;
     merged.push(c);
   }
   if (!merged.length) throw new Error("「" + name + "」が見つかりませんでした。別の表記で試してください。");
