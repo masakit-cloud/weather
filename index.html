@@ -352,7 +352,7 @@
     <h2>週間予報</h2>
     <div class="daily" id="daily"></div>
 
-    <h2>気象レーダー</h2>
+    <h2>気象レーダー <span style="font-weight:400;letter-spacing:0;text-transform:none">— 地図をタップするとその地点の天気を表示できます</span></h2>
     <div id="radar-wrap">
       <div id="radar-map"></div>
       <div class="radar-bar">
@@ -382,7 +382,7 @@
     <p class="set-note">キーはこのPCのブラウザ内(localStorage)にのみ保存されます。このファイルを他人に公開する場合はキーを入れないでください。</p>
   </details>
 
-  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v3.1</b></footer>
+  <footer>データ: Open-Meteo — 地点ごとに最適な気象モデル(日本はJMA等)を自動選択<br>都市検索: GeoNames / © OpenStreetMap contributors ・ バージョン: <b>v3.2</b></footer>
 </div>
 
 <script>
@@ -1136,6 +1136,35 @@ function render(label, d, sources, warnings, loc) {
 }
 
 // ─── 雨雲レーダー(RainViewer) ───────────────────────────
+// ─── 🗺️ 地図タップで地点選択 ─────────────────────
+// 住所検索で見つからない場所でも、地図上をタップすれば正確な地点を指定できる
+function mapPick(latlng, map) {
+  const lat = latlng.lat, lon = latlng.lng;
+  const btn = document.createElement("button");
+  btn.textContent = "📍 この地点の天気を表示";
+  btn.style.cssText = "font-size:13px;padding:8px 12px;border-radius:10px;min-height:0";
+  btn.addEventListener("click", async () => {
+    map.closePopup();
+    // 逆ジオコーディングで地点名を取得(失敗したら座標表示)
+    let label = "選択地点(" + lat.toFixed(3) + ", " + lon.toFixed(3) + ")";
+    try {
+      const res = await fetch("https://nominatim.openstreetmap.org/reverse?format=json" +
+        "&accept-language=ja&zoom=14&lat=" + lat.toFixed(5) + "&lon=" + lon.toFixed(5));
+      if (res.ok) {
+        const j = await res.json();
+        const a = j.address || {};
+        const parts = [a.suburb || a.hamlet || a.neighbourhood || a.road,
+                       a.city || a.town || a.village,
+                       a.state].filter(Boolean);
+        if (parts.length) label = "📍 " + parts.slice(0, 2).join("・");
+      }
+    } catch (e) { /* 座標表示のまま */ }
+    showLoc({ label, lat, lon });
+    scrollTo({ top: 0, behavior: "smooth" });
+  });
+  L.popup({ closeButton: true }).setLatLng(latlng).setContent(btn).openOn(map);
+}
+
 const radar = {
   map: null, marker: null, layers: [], frames: [], idx: 0, timer: null,
   data: null, mode: "rain",
@@ -1154,6 +1183,8 @@ const radar = {
       this.marker = L.circleMarker([lat, lon], {
         radius: 7, color: "#2563a8", weight: 2, fillColor: "#fff", fillOpacity: 0.9,
       }).addTo(this.map);
+      // 🗺️ 地図タップで任意の地点を選択(住所が検索で見つからないときの決定版)
+      this.map.on("click", e => mapPick(e.latlng, this.map));
     } else {
       this.map.setView([lat, lon], 8);
       this.marker.setLatLng([lat, lon]);
